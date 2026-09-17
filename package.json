@@ -1,0 +1,13 @@
+{
+  "name": "codekite-fly-e2e-consumer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/receipts.test.mjs",
+    "codekite:check": "npm test"
+  },
+  "dependencies": {
+    "@codekite/test-provider": "file:./packages/test-provider"
+  }
+}

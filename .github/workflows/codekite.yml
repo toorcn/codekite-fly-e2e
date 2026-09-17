@@ -1,0 +1,94 @@
+name: CodeKite compatibility
+run-name: codekite:${{ inputs.codekite_run_id }}:${{ inputs.codekite_stage }}
+on:
+  workflow_dispatch:
+    inputs:
+      codekite_run_id:
+        description: CodeKite assessment ID
+        required: true
+        type: string
+      codekite_stage:
+        description: baseline, probe, or verification
+        required: true
+        type: string
+      codekite_probes:
+        description: CodeKite frozen regression test manifest
+        required: true
+        type: string
+        default: '[]'
+permissions:
+  contents: read
+jobs:
+  compatibility:
+    name: CodeKite compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout assessed revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: CodeKite targeted probes
+        env:
+          CODEKITE_PROBES: ${{ inputs.codekite_probes }}
+        run: |
+          node --input-type=module <<'CODEKITE_PROBE'
+          // This program runs only in the customer's configured GitHub Actions workflow.
+          // CodeKite validates the complete inline program before dispatching a check.
+          import { readFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { spawnSync } from 'node:child_process';
+          import path from 'node:path';
+          
+          const input = JSON.parse(process.env.CODEKITE_PROBES || '[]');
+          if (!Array.isArray(input) || input.length > 5) throw new Error('Invalid CodeKite probe manifest');
+          let failed = false;
+          const paths = new Set();
+          for (const probe of input) {
+            if (!probe || typeof probe.path !== 'string' || typeof probe.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(probe.sha256)
+              || !/^[a-zA-Z0-9_./-]+\.(?:[cm]?[jt]s)$/.test(probe.path) || probe.path.startsWith('/') || probe.path.split('/').some(part => !part || part === '..' || part === '.')
+              || paths.has(probe.path) || typeof probe.expectedFailure !== 'string' || probe.expectedFailure.length < 16) throw new Error('Invalid CodeKite probe identity');
+            paths.add(probe.path);
+            const content = readFileSync(path.resolve(probe.path));
+            if (createHash('sha256').update(content).digest('hex') !== probe.sha256) throw new Error('CodeKite probe content changed after assessment');
+            // Prevent a repository install/test script from silently changing the assessed source.
+            if (spawnSync('git', ['diff', '--quiet', 'HEAD', '--'], { encoding: 'utf8' }).status !== 0) throw new Error('Tracked source changed after checkout');
+            const run = spawnSync(process.execPath, ['--experimental-strip-types', '--test', '--test-reporter=tap', '--', probe.path], {
+              encoding: 'utf8', timeout: 45_000, maxBuffer: 2 * 1024 * 1024,
+              env: { ...process.env, CODEKITE_PROBES: '' },
+            });
+            const output = `${run.stdout || ''}\n${run.stderr || ''}`;
+            process.stdout.write(output);
+            const tests = Number(output.match(/^# tests (\d+)\s*$/m)?.[1] || 0);
+            const skipped = Number(output.match(/^# skipped (\d+)\s*$/m)?.[1] || 0);
+            const cancelled = Number(output.match(/^# cancelled (\d+)\s*$/m)?.[1] || 0);
+            const failedTests = Number(output.match(/^# fail (\d+)\s*$/m)?.[1] || 0);
+            const diagnostics = [...output.matchAll(/^[ \t]*---\r?\n([\s\S]*?)^[ \t]*\.\.\.[ \t]*$/gm)].map(match => match[1]);
+            const expectedFailureMatched = failedTests > 0 && diagnostics.length === failedTests && diagnostics.every(block => {
+              const lines = block.split(/\r?\n/);
+              const index = lines.findIndex(line => /^\s*error:/.test(line));
+              if (index < 0) return false;
+              let error = lines[index].replace(/^\s*error:\s*/, '');
+              if (/^[|>][-+]?\s*$/.test(error)) error = lines[index + 1]?.trim() || '';
+              return error.replace(/^['"]/, '').startsWith(probe.expectedFailure)
+                && /^\s*code:\s*['"]?ERR_ASSERTION['"]?\s*$/m.test(block)
+                && /^\s*name:\s*['"]?AssertionError['"]?\s*$/m.test(block);
+            });
+            const unchanged = spawnSync('git', ['diff', '--quiet', 'HEAD', '--'], { encoding: 'utf8' }).status === 0;
+            const outcome = !run.error && tests > 0 && !skipped && !cancelled && unchanged
+              ? run.status === 0 ? 'passed' : expectedFailureMatched ? 'assertion_failed' : 'failed'
+              : 'failed';
+            console.log(`CODEKITE_PROBE_RESULT ${JSON.stringify({ path: probe.path, sha256: probe.sha256, outcome, expectedFailureMatched, tests })}`);
+            if (outcome !== 'passed') failed = true;
+          }
+          if (failed) process.exitCode = 1;
+          CODEKITE_PROBE
+      - name: Compatibility tests
+        run: npm run codekite:check

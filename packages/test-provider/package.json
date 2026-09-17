@@ -1,0 +1,9 @@
+{
+  "name": "@codekite/test-provider",
+  "version": "1.0.0",
+  "description": "Explicitly controlled provider SDK for CodeKite end-to-end checks",
+  "type": "module",
+  "exports": "./index.mjs",
+  "files": ["index.mjs", "README.md"],
+  "license": "UNLICENSED"
+}

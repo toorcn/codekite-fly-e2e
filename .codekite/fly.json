@@ -1,0 +1,9 @@
+{
+  "workflow": "codekite.yml",
+  "testPaths": [
+    "tests/codekite/"
+  ],
+  "sourcePaths": [
+    "src/"
+  ]
+}
