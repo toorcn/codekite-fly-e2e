@@ -3,6 +3,8 @@ import { readCustomer } from '@codekite/test-provider';
 /** Customer-facing receipts must keep their name and amount during API rollout. */
 export async function formatReceipt(response) {
   const customer = readCustomer(response);
+  const name = customer.full_name ?? `${customer.given_name} ${customer.family_name}`;
   const amount = (response.amount_minor / 100).toFixed(2);
-  return `Receipt for ${customer.full_name}: ${response.currency} ${amount}`;
+  return `Receipt for ${name}: ${response.currency} ${amount}`;
 }
+
