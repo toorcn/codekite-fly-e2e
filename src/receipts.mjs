@@ -5,5 +5,5 @@ export async function formatReceipt(response) {
   const customer = readCustomer(response);
   const amount = (response.amount_minor / 100).toFixed(2);
   const name = customer.full_name ?? `${customer.given_name} ${customer.family_name}`;
-  return `Receipt for ${name}: ${response.currency} ${amount}`;
+  return `Receipt for ${name}: ${response.currency_code ?? response.currency} ${amount}`;
 }
